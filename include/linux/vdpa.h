@@ -77,7 +77,8 @@ struct vdpa_mgmt_dev;
  * @cf_lock: Protects get and set access to configuration layout.
  * @index: device index
  * @features_valid: were features initialized? for legacy guests
- * @ngroups: the number of virtqueue groups
+ * @ngroups: the number of virtqueue groups (including dedicated descriptor
+ *           groups for virtqueues)
  * @nas: the number of address spaces
  * @use_va: indicate whether virtual address must be used by this device
  * @nvqs: maximum number of supported virtqueues
@@ -204,6 +205,13 @@ struct vdpa_map_file {
  *				@vdev: vdpa device
  *				@idx: virtqueue index
  *				Returns u32: group id for this virtqueue
+ * @get_vq_desc_group:		Get the group id for a specific
+ *				virtqueue's descriptor table (optional)
+ *				@vdev: vdpa device
+ *				@idx: virtqueue index
+ *				Returns u32: group id for the descriptor table
+ *				of this virtqueue, could be different than the
+ *				group id for virtqueue itself.
  * @get_device_features:	Get virtio features supported by the device
  *				@vdev: vdpa device
  *				Returns the virtio features support by the
@@ -357,6 +365,7 @@ struct vdpa_config_ops {
 	/* Device ops */
 	u32 (*get_vq_align)(struct vdpa_device *vdev);
 	u32 (*get_vq_group)(struct vdpa_device *vdev, u16 idx);
+	u32 (*get_vq_desc_group)(struct vdpa_device *vdev, u16 idx);
 	u64 (*get_device_features)(struct vdpa_device *vdev);
 	int (*set_driver_features)(struct vdpa_device *vdev, u64 features);
 	u64 (*get_driver_features)(struct vdpa_device *vdev);
