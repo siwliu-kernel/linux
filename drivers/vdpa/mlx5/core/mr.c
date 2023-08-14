@@ -489,20 +489,14 @@ static void destroy_user_mr(struct mlx5_vdpa_dev *mvdev, struct mlx5_vdpa_mr *mr
 	}
 }
 
-static void _mlx5_vdpa_destroy_cvq_mr(struct mlx5_vdpa_dev *mvdev, unsigned int asid)
+static void _mlx5_vdpa_destroy_cvq_mr(struct mlx5_vdpa_dev *mvdev)
 {
-	if (mvdev->group2asid[MLX5_VDPA_CVQ_GROUP] != asid)
-		return;
-
 	prune_iotlb(mvdev);
 }
 
-static void _mlx5_vdpa_destroy_dvq_mr(struct mlx5_vdpa_dev *mvdev, unsigned int asid)
+static void _mlx5_vdpa_destroy_dvq_mr(struct mlx5_vdpa_dev *mvdev)
 {
 	struct mlx5_vdpa_mr *mr = &mvdev->mr;
-
-	if (mvdev->group2asid[MLX5_VDPA_DATAVQ_GROUP] != asid)
-		return;
 
 	if (!mr->initialized)
 		return;
@@ -521,8 +515,10 @@ void mlx5_vdpa_destroy_mr_asid(struct mlx5_vdpa_dev *mvdev, unsigned int asid)
 
 	mutex_lock(&mr->mkey_mtx);
 
-	_mlx5_vdpa_destroy_dvq_mr(mvdev, asid);
-	_mlx5_vdpa_destroy_cvq_mr(mvdev, asid);
+	if (mvdev->group2asid[MLX5_VDPA_DATAVQ_GROUP] == asid)
+		_mlx5_vdpa_destroy_dvq_mr(mvdev);
+	if (mvdev->group2asid[MLX5_VDPA_CVQ_GROUP] == asid)
+		_mlx5_vdpa_destroy_cvq_mr(mvdev);
 
 	mutex_unlock(&mr->mkey_mtx);
 }
@@ -534,24 +530,16 @@ void mlx5_vdpa_destroy_mr(struct mlx5_vdpa_dev *mvdev)
 }
 
 static int _mlx5_vdpa_create_cvq_mr(struct mlx5_vdpa_dev *mvdev,
-				    struct vhost_iotlb *iotlb,
-				    unsigned int asid)
+				    struct vhost_iotlb *iotlb)
 {
-	if (mvdev->group2asid[MLX5_VDPA_CVQ_GROUP] != asid)
-		return 0;
-
 	return dup_iotlb(mvdev, iotlb);
 }
 
 static int _mlx5_vdpa_create_dvq_mr(struct mlx5_vdpa_dev *mvdev,
-				    struct vhost_iotlb *iotlb,
-				    unsigned int asid)
+				    struct vhost_iotlb *iotlb)
 {
 	struct mlx5_vdpa_mr *mr = &mvdev->mr;
 	int err;
-
-	if (mvdev->group2asid[MLX5_VDPA_DATAVQ_GROUP] != asid)
-		return 0;
 
 	if (mr->initialized)
 		return 0;
@@ -574,18 +562,22 @@ static int _mlx5_vdpa_create_mr(struct mlx5_vdpa_dev *mvdev,
 {
 	int err;
 
-	err = _mlx5_vdpa_create_dvq_mr(mvdev, iotlb, asid);
-	if (err)
-		return err;
-
-	err = _mlx5_vdpa_create_cvq_mr(mvdev, iotlb, asid);
-	if (err)
-		goto out_err;
+	if (mvdev->group2asid[MLX5_VDPA_DATAVQ_GROUP] == asid) {
+		err = _mlx5_vdpa_create_dvq_mr(mvdev, iotlb);
+		if (err)
+			return err;
+	}
+	if (mvdev->group2asid[MLX5_VDPA_CVQ_GROUP] == asid) {
+		err = _mlx5_vdpa_create_cvq_mr(mvdev, iotlb);
+		if (err)
+			goto out_err;
+	}
 
 	return 0;
 
 out_err:
-	_mlx5_vdpa_destroy_dvq_mr(mvdev, asid);
+	if (mvdev->group2asid[MLX5_VDPA_DATAVQ_GROUP] == asid)
+		_mlx5_vdpa_destroy_dvq_mr(mvdev);
 
 	return err;
 }
@@ -598,6 +590,28 @@ int mlx5_vdpa_create_mr(struct mlx5_vdpa_dev *mvdev, struct vhost_iotlb *iotlb,
 	mutex_lock(&mvdev->mr.mkey_mtx);
 	err = _mlx5_vdpa_create_mr(mvdev, iotlb, asid);
 	mutex_unlock(&mvdev->mr.mkey_mtx);
+	return err;
+}
+
+int mlx5_vdpa_reset_mr(struct mlx5_vdpa_dev *mvdev, unsigned int asid)
+{
+	struct mlx5_vdpa_mr *mr = &mvdev->mr;
+	int err = 0;
+
+	if (asid != 0)
+		return 0;
+
+	mutex_lock(&mr->mkey_mtx);
+	if (!mr->user_mr)
+		goto out;
+	_mlx5_vdpa_destroy_dvq_mr(mvdev);
+	if (MLX5_CAP_GEN(mvdev->mdev, umem_uid_0)) {
+		err = _mlx5_vdpa_create_dvq_mr(mvdev, NULL);
+		if (err)
+			mlx5_vdpa_warn(mvdev, "create DMA MR failed\n");
+	}
+out:
+	mutex_unlock(&mr->mkey_mtx);
 	return err;
 }
 
